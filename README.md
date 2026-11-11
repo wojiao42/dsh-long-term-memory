@@ -30,14 +30,15 @@
 
 每个会话的**第一次** `pre-step`，插件读取记忆文件并注入。同一会话只注入一次，不会重复烧 token。
 
-### 七个工具
+### 八个工具
 
 agent 可调用，你也可以让它调：
 
 | 工具 | 作用 |
 |---|---|
 | `memory_add` | 写一条事实进记忆文件。可带 `source`（来源）与 `date`；`pending: true` 则只进待审队列不写记忆。**写前整份备份。** |
-| `memory_recall` | 在记忆文件里做**纯文本**关键词搜索：多词是「或」、**按相关度排序**、每条带 `文件:行号`；中文长词支持部分命中（v1.3.0 起） |
+| `memory_import_candidates` | **消费导入插件产出的候选**（`profile/inbox/candidates-*.json`）：按类型与敏感度分派到 `MEMORY.md` / `INTERESTS.md` / `USER-PROFILE.md` 或待审队列；写前备份、去重、生成审计报告（v2.1.0） |
+| `memory_recall` | 在记忆文件里做**纯文本**关键词搜索：多词是「或」、**按相关度排序**、每条带 `文件:行号`；中文长词支持部分命中（v1.3.0 起）；v2.0.0 起同时搜 `profile/` 下的详细记忆文件 |
 | `memory_list` | 列出记忆文件位置、大小、修改时间、备份份数、待审条数 —— **用来核对插件到底读了什么** |
 | `memory_undo` | 撤回最近一次写入：恢复成写入前的整份内容（`list: true` 只列备份）。会一并丢弃那之后的改动，包括手写的 |
 | `memory_pending` | 处理待审队列：`list` / `accept`（收进记忆，写前备份）/ `drop`（只改标记，不删文件） |
@@ -294,6 +295,8 @@ node tools/publish-test.mjs    # 25 项断言：发布脚本与隐私扫描的�
 10. **助手回复不算"你说的话"**：autoScan 只认 `user/message`。所以只在回复里出现过的结论（"那就定 X 吧"）不会自动被找到。
 
 ## 版本
+
+- **v2.1.0**（2026-11-11）：新增 `memory_import_candidates`——消费 `dsh-chatgpt-to-memory` 产出的候选，按类型/敏感度分派到 MEMORY / INTERESTS / USER-PROFILE / 待审，写前备份 + 去重 + 审计报告。首次用真实数据验证：13 条候选 → INTERESTS +3、USER-PROFILE +7、待审 +3、重复 0。
 
 - **v2.0.0**（2026-11-11）：**更名** `dsh-memory-file` → `dsh-long-term-memory`（插件 id / bundle 名同步改）；新增「读取引导」——每轮注入列出 `profile/` 下的详细记忆文件（INTERESTS / USER-PROFILE / NOTES-PROJECTS）与触发话题；`memory_recall` 搜索范围扩大到这些详细文件，命中标注 `scope=detail` 并提示读全文。数据格式、配置项、工具行为与 1.x 完全兼容。
 
