@@ -304,6 +304,44 @@ await check('memory_recall 多词为「或」，全部整词命中的排在前�
   assert.ok(r.hits[0].text.includes('镜头'), `整词全中的行应排第一，实际第一行是：${r.hits[0].text}`);
 });
 
+// ── v1.4.0：详细记忆文件（profile/ 下不注入的文件）—— 读取引导 + recall 纳入搜索 ──
+const profileDir = join(cwd, 'profile');
+mkdirSync(profileDir, { recursive: true });
+writeFileSync(
+  join(profileDir, 'INTERESTS.md'),
+  ['# 文化与思想兴趣', '', '- EVA 设定考据：新旧剧场版 SEELE 议会差异', '- DOTA2 珍藏与宝箱囤货', ''].join('\n'),
+  'utf8',
+);
+
+await check('注入里的「读取引导」：详细记忆文件存在时出现，含文件名与触发话题', async () => {
+  const ctx3 = { on: (ev, fn) => { handlers[ev] = fn; }, tools: { register: () => {} } };
+  mod.apply(ctx3, { dshHome: home });
+  const agent = { session: { header: { cwd } } };
+  const out = await handlers['agent/pre-step']({ agent, step: 1, signal: undefined }, async () => okDecision);
+  const text = JSON.stringify(out.messages);
+  assert.ok(text.includes('读取引导'), '注入里缺少「读取引导」块');
+  assert.ok(text.includes('INTERESTS.md'), '读取引导没列出 INTERESTS.md');
+  assert.ok(text.includes('影视') && text.includes('哲学'), '读取引导缺少触发话题提示');
+});
+
+await check('guidedReading:false 时不注入读取引导', async () => {
+  const ctx4 = { on: (ev, fn) => { handlers[ev] = fn; }, tools: { register: () => {} } };
+  mod.apply(ctx4, { dshHome: home, guidedReading: false });
+  const agent = { session: { header: { cwd } } };
+  const out = await handlers['agent/pre-step']({ agent, step: 1, signal: undefined }, async () => okDecision);
+  assert.ok(!JSON.stringify(out.messages).includes('读取引导'), 'guidedReading:false 仍注入了引导');
+});
+
+await check('memory_recall 会搜详细记忆文件，命中标注 scope=detail 并提示读全文', async () => {
+  const r = await recallTool.execute({ terms: 'SEELE' }, { agent: fakeAgent });
+  const hit = r.hits.find((h) => h.file === 'INTERESTS.md');
+  assert.ok(hit, '未搜到详细文件里的内容（recall 没纳入 profile 文件）');
+  assert.equal(hit.scope, 'detail', `详细文件命中的 scope 应为 detail，实际 ${hit.scope}`);
+  const rendered = recallTool.output.render({}, r).map((b) => b.text).join('\n');
+  assert.ok(rendered.includes('详细记忆文件'), 'render 里缺少“去读详细文件”的提示');
+  assert.ok(rendered.includes('INTERESTS.md'), 'render 提示里没列出详细文件名');
+});
+
 await check('memory_list 报告文件位置与大小', async () => {
   const r = await listTool.execute({}, { agent: fakeAgent });
   const ws = r.files.find((f) => f.scope === 'workspace');

@@ -109,6 +109,28 @@ function resolveMemoryPaths(cwd, dshHome) {
 }
 
 /**
+ * 详细记忆文件（放在工作区 `profile/` 下，**不随每轮注入**，只在需要时 read）。
+ * 每项：label 展示名、file 绝对路径、trigger 触发话题提示。
+ * 为什么要有这一层：注入文件只放"不了解就会答错"的稳定事实；兴趣、成长数字、
+ * 项目过程这类详细内容放这里，靠「索引 + 触发规则 + recall 搜索范围扩大」保证用得到。
+ */
+function detailedDocs(cwd) {
+  if (!cwd) return [];
+  const dir = join(resolve(cwd), 'profile');
+  const defs = [
+    ['文化与思想兴趣', 'INTERESTS.md', '影视/动漫/游戏/小说/哲学/历史/宗教/军事/网络文化/考据'],
+    ['详细画像', 'USER-PROFILE.md', '孩子/家庭/健康/硬件/采购/教育观点等细节'],
+    ['项目技术笔记', 'NOTES-PROJECTS.md', '插件/DSH/部署/故障/历史决策'],
+  ];
+  const out = [];
+  for (const [label, name, trigger] of defs) {
+    const file = join(dir, name);
+    if (existsSync(file)) out.push({ label, file, trigger });
+  }
+  return out;
+}
+
+/**
  * 旁路文件（备份、待审队列）的位置，**全部由记忆文件路径推导**。
  * 这是「只碰这几个位置」这条主张的实现方式：不接收任何外部路径。
  */
@@ -536,6 +558,9 @@ export function apply(ctx, config = {}) {
     ? Math.max(200, config.autoScanMaxChars)
     : DEFAULT_AUTO_SCAN_MAX_CHARS;
   const scanHome = resolveHome(dshHome);
+  // 读取引导：把 profile 里"不注入的详细记忆文件"列进每轮注入，并说明何时先读。
+  // 默认开启；用户不想要详细文件提示时可设 guidedReading: false。
+  const guidedReading = config.guidedReading !== false;
 
   const pathsFor = (agent) => resolveMemoryPaths(agent?.session?.header?.cwd, dshHome);
 
@@ -591,6 +616,26 @@ export function apply(ctx, config = {}) {
       }
     } catch {
       // 读不到待审文件就当没有
+    }
+
+    // 读取引导（v1.4）：MEMORY.md 只是"精简注入层"，详细内容在 profile 的
+    // INTERESTS / USER-PROFILE / NOTES-PROJECTS 里。这里把"有什么、什么时候必须去读"
+    // 写进每轮注入，避免 agent 不知道或不记得去读。
+    if (guidedReading) {
+      try {
+        const docs = detailedDocs(agent?.session?.header?.cwd);
+        if (docs.length) {
+          const lines = docs.map(
+            (d) => `- ${d.label}：\`${d.file}\` —— 命中「${d.trigger}」时**先 read 全文再回答**`,
+          );
+          parts.push(
+            `<!-- 读取引导 -->\n**详细记忆文件（不随每轮注入，需要时 read）**：\n${lines.join('\n')}\n` +
+              '· `memory_recall` 也会搜这些文件，命中结果标注来源；要细节就 read 对应文件。',
+          );
+        }
+      } catch {
+        // 读不到目录就跳过，绝不影响注入
+      }
     }
 
     if (parts.length === 0) {
@@ -738,7 +783,13 @@ export function apply(ctx, config = {}) {
         const head = value.total > value.hits.length
           ? `命中 ${value.total} 行，按相关度只显示前 ${value.hits.length} 条（文件:行号 内容）：`
           : `命中 ${value.total} 行（已按相关度排序，文件:行号 内容）：`;
-        return [{ type: 'text', text: `${head}\n${shown.join('\n')}` }];
+        // v1.4：命中详细文件时主动提示去读全文（不注入的内容靠这里引导）。
+        const detailFiles = [...new Set(value.hits.filter((h) => h.scope === 'detail').map((h) => h.file))];
+        const detailHint = detailFiles.length
+          ? `\n\n📖 上面有来自详细记忆文件的命中：${detailFiles.join('、')}。` +
+            '这些文件不随每轮注入，**需要完整内容请直接 read 对应文件**（别只用这几行下结论）。'
+          : '';
+        return [{ type: 'text', text: `${head}\n${shown.join('\n')}${detailHint}` }];
       },
     },
     async execute(args, exec) {
@@ -757,6 +808,22 @@ export function apply(ctx, config = {}) {
         for (const hit of searchLines(text, terms)) {
           all.push({ scope, file: base, line: hit.line, score: hit.score, text: hit.text });
         }
+      }
+      // v1.4：把 profile 下的详细记忆文件也纳入搜索范围。
+      // 这样 agent 用 memory_recall 查"EVA/战锤/半亩芳塘"时能直接搜到详细版内容，
+      // 不必依赖"记得主动去 read 文件"。
+      try {
+        for (const d of detailedDocs(exec?.agent?.session?.header?.cwd)) {
+          const text = readIfExists(d.file);
+          if (text === undefined) continue;
+          scanned.push(d.file);
+          const base = d.file.split(/[\\/]/).pop();
+          for (const hit of searchLines(text, terms)) {
+            all.push({ scope: 'detail', file: base, line: hit.line, score: hit.score, text: hit.text });
+          }
+        }
+      } catch {
+        // 详细文件读不到就跳过
       }
       all.sort((a, b) => b.score - a.score || a.text.length - b.text.length || a.line - b.line);
       return { hits: all.slice(0, limit), total: all.length, scanned };
