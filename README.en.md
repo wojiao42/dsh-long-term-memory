@@ -1,4 +1,6 @@
-# dsh-memory-file
+# dsh-long-term-memory
+
+> Renamed from `dsh-memory-file` in v2.0.0. Data format and config are fully compatible.
 
 [简体中文（完整版）](README.md) · English (abridged)
 
@@ -7,7 +9,7 @@
 
 File-backed long-term memory for DeepSeek Harness: injects your own Markdown memory file at each session start, and adds tools to write it, queue uncertain lines for review, undo a bad write, and audit what it actually read. Reads no conversations by default, never opens a network connection, never deletes files.
 
-[![version](https://img.shields.io/badge/version-1.3.0-blue)](https://github.com/wojiao42/dsh-memory-file/releases)
+[![version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/wojiao42/dsh-long-term-memory/releases)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## What it does
@@ -20,14 +22,14 @@ File-backed long-term memory for DeepSeek Harness: injects your own Markdown mem
 
 ## Quick start
 
-**GUI (recommended on desktop):** Settings (Ctrl+,) → Plugin market → Custom install → `github:wojiao42/dsh-memory-file`, then restart DSH.
+**GUI (recommended on desktop):** Settings (Ctrl+,) → Plugin market → Custom install → `github:wojiao42/dsh-long-term-memory`, then restart DSH.
 
 > The desktop profile is app-managed: running `dsh plugin --profile desktop add` may be rejected; if it is, use the GUI step above.
 
 **Command line (Web profile):**
 
 ```bash
-dsh plugin --profile web add github:wojiao42/dsh-memory-file
+dsh plugin --profile web add github:wojiao42/dsh-long-term-memory
 ```
 
 Refresh the page afterwards.

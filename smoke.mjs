@@ -1,5 +1,5 @@
 /**
- * dsh-memory-file 冒烟测试
+ * dsh-long-term-memory 冒烟测试
  *
  * 做两件事：
  *   A) 审计断言：用静态检查证明插件不联网、不读对话内容、只读写规定的路径。
@@ -176,7 +176,7 @@ console.log('\n=== B) 行为测试（假 ctx / 假 agent）===');
 
 const mod = await import('./index.js');
 await check('导出 name 与 apply', () => {
-  assert.equal(mod.name, 'memory-file');
+  assert.equal(mod.name, 'long-term-memory');
   assert.equal(typeof mod.apply, 'function');
 });
 
@@ -692,7 +692,7 @@ if (process.argv.includes('--profile')) {
   console.log(`  DSH_HOME = ${home}`);
 
   await check('profile 目录存在', () => assert.ok(existsSync(prof), prof));
-  await check('插件已复制进 profile', () => assert.ok(existsSync(join(prof, 'node_modules', 'dsh-memory-file', 'index.js'))));
+  await check('插件已复制进 profile', () => assert.ok(existsSync(join(prof, 'node_modules', 'dsh-long-term-memory', 'index.js'))));
 
   await check('记忆插件已挂载且 config 覆盖在位（maxBytes 1 MB / autoScan）', async () => {
     const { createRequire } = await import('node:module');
@@ -702,16 +702,16 @@ if (process.argv.includes('--profile')) {
     const ins = doc.filter((x) => x && x.insert).flatMap((x) => x.insert);
     const pkg = JSON.parse(readFileSync(join(prof, 'package.json'), 'utf8'));
     const bundles = pkg?.dsh?.profile?.bundles ?? [];
-    const viaBundle = bundles.includes('dsh-memory-file');
-    const mf = ins.filter((x) => x.id === 'memory-file');
-    // 两种合法形态：2026-11-08 起改为 bundle 安装（bundles 里有 dsh-memory-file）；
+    const viaBundle = bundles.includes('dsh-long-term-memory');
+    const mf = ins.filter((x) => x.id === 'long-term-memory');
+    // 两种合法形态：2026-11-08 起改为 bundle 安装（bundles 里有 dsh-long-term-memory）；
     // 老配置是 patch 里的 insert 条目。两种都算挂载成功。
     assert.ok(
       viaBundle || mf.length === 1,
-      'memory-file 既不在 bundles 也没有 insert 条目（升级重写配置的典型症状）',
+      'long-term-memory 既不在 bundles 也没有 insert 条目（升级重写配置的典型症状）',
     );
-    // config 覆盖可以写在 insert 块里，也可以写成 `- id: memory-file` 的定向覆盖
-    const override = doc.find((x) => x && x.id === 'memory-file');
+    // config 覆盖可以写在 insert 块里，也可以写成 `- id: long-term-memory` 的定向覆盖
+    const override = doc.find((x) => x && x.id === 'long-term-memory');
     const cfgMaxBytes = mf[0]?.config?.maxBytes ?? override?.config?.maxBytes;
     const cfgAutoScan = mf[0]?.config?.autoScan ?? override?.config?.autoScan;
     assert.equal(
@@ -739,8 +739,8 @@ if (process.argv.includes('--profile')) {
     }
     // market 面板有多个历史名（@local / dsh-plugin-market / dsh-market-panel），
     // 且用户可能跟随官方方向把它撤掉，所以这里不再断言它，避免自测假红。
-    // memory-file 2026-11-08 起是 bundle 安装，挂载检查见上面那条。
-    assert.ok(pkg.dependencies['dsh-memory-file'], 'dependencies 里缺少 dsh-memory-file');
+    // long-term-memory 2026-11-08 起是 bundle 安装，挂载检查见上面那条。
+    assert.ok(pkg.dependencies['dsh-long-term-memory'], 'dependencies 里缺少 dsh-long-term-memory');
   });
 
   await check('备份文件在位（可回滚）', () => {

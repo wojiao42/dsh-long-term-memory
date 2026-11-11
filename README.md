@@ -1,11 +1,11 @@
-# dsh-memory-file
+# dsh-long-term-memory
 
 简体中文 · [English（精简版）](README.en.md)
 
 给 DeepSeek Harness 的**文件型长期记忆**：每个会话开始注入你自己维护的 Markdown 记忆文件，并提供工具让 agent 读写它、把拿不准的放进待审队列、撤回写错的一条、核对它到底读过什么。
 它默认不读你的对话、不联网、不删文件 —— 这几条都能对照源码逐条核实。
 
-[![version](https://img.shields.io/badge/version-1.3.0-blue)](https://github.com/wojiao42/dsh-memory-file/releases)
+[![version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/wojiao42/dsh-long-term-memory/releases)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 截图
@@ -20,7 +20,7 @@
 
 ## 快速上手
 
-1. 装：设置（Ctrl+,）→ 插件市场 → 自定义安装 → 填 `github:wojiao42/dsh-memory-file` → 重启 DSH。
+1. 装：设置（Ctrl+,）→ 插件市场 → 自定义安装 → 填 `github:wojiao42/dsh-long-term-memory` → 重启 DSH。
 2. 在对话里说「把这条记到记忆里」—— agent 调 `memory_add` 写进工作区 `.dsh/memory/MEMORY.md`，写前留整份备份。
 3. 新开一个会话：第一条消息里就能看到记忆被注入；用 `memory_list` / `memory_status` 核对它到底读了什么。
 
@@ -60,8 +60,8 @@ agent 可调用，你也可以让它调：
 插件行的 `config` 字段：
 
 ```yaml
-- id: memory-file
-  name: 'dsh-memory-file'
+- id: long-term-memory
+  name: 'dsh-long-term-memory'
   config:
     maxBytes: 16384        # 单次注入的字节上限，超出会被截断（源码默认 1048576，即 1MB）
     dshHome: null          # 覆盖 $DSH_HOME（一般不用）
@@ -241,14 +241,14 @@ Markdown 记忆文件（+ 备份 + 待审队列，都可以用工具撤回）
 
 ### 图形界面（桌面端，推荐）
 
-设置（Ctrl+,）→ 插件市场 → 自定义安装 → 填 `github:wojiao42/dsh-memory-file` → 重启 DSH。
+设置（Ctrl+,）→ 插件市场 → 自定义安装 → 填 `github:wojiao42/dsh-long-term-memory` → 重启 DSH。
 
 > 桌面端的 profile 由应用托管：直接跑 `dsh plugin --profile desktop add` 可能被拒绝，遇到就走上一步。
 
 ### 命令行（Web profile）
 
 ```bash
-dsh plugin --profile web add github:wojiao42/dsh-memory-file
+dsh plugin --profile web add github:wojiao42/dsh-long-term-memory
 ```
 
 装完刷新页面。
@@ -295,6 +295,8 @@ node tools/publish-test.mjs    # 25 项断言：发布脚本与隐私扫描的�
 
 ## 版本
 
+- **v2.0.0**（2026-11-11）：**更名** `dsh-memory-file` → `dsh-long-term-memory`（插件 id / bundle 名同步改）；新增「读取引导」——每轮注入列出 `profile/` 下的详细记忆文件（INTERESTS / USER-PROFILE / NOTES-PROJECTS）与触发话题；`memory_recall` 搜索范围扩大到这些详细文件，命中标注 `scope=detail` 并提示读全文。数据格式、配置项、工具行为与 1.x 完全兼容。
+
 - **v1.3.0**（2026-11-03）：`memory_recall` 重写检索 —— 多词从「与」改为「或」（全部整词命中排最前）、中文长词允许 2 字以上部分命中、结果带 `文件:行号` 并按相关度排序、新增 `limit`（默认 20，上限 200）。起因：记忆里写「三年级奥数」，搜「孩子奥数」旧实现命中 0 行。
 - **v1.2.1**（2026-10-06）：注入时附「还有 N 条待审」提醒，待审不再静默积压。
 - **v1.2.0**（2026-10-06）：新增 `autoScan`（可选、默认关闭）—— 读本机会话日志、只提取你自己的发言、附在注入里提示 agent 归档；新增 `memory_scan` 工具；会话日志读取纳入审计登记，并有单文件 / 单轮资源上限。
@@ -303,7 +305,7 @@ node tools/publish-test.mjs    # 25 项断言：发布脚本与隐私扫描的�
 
 ## 收录状态
 
-- 仓库：<https://github.com/wojiao42/dsh-memory-file>（已带 `dsh-plugin` topic）
+- 仓库：<https://github.com/wojiao42/dsh-long-term-memory>（已带 `dsh-plugin` topic）
 - 目标目录：社区精选 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)，
   `dsh-plugin.org` 上的条目从它同步 —— **进了这个目录就等于进了插件市场**
 - PR：[#6539](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/6539)（2026-10-03 合并）

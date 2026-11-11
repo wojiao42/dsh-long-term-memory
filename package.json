@@ -1,8 +1,8 @@
 {
-  "name": "dsh-memory-file",
-  "version": "1.4.0",
+  "name": "dsh-long-term-memory",
+  "version": "2.0.0",
   "private": false,
-  "description": "File-backed memory for DeepSeek Harness: injects your own Markdown memory file each session, adds read/write tools with backup and undo, reports DSH_HOME drift, and (opt-in) surfaces your own recent lines from local session logs so the agent can file them. Reads no conversations by default; never opens a network connection.",
+  "description": "Local long-term memory for DeepSeek Harness (formerly dsh-memory-file): injects your own Markdown memory files each session, adds read/write/recall tools with backup and undo, guides the agent to read detailed memory files (interests / profile / project notes), reports DSH_HOME drift, and (opt-in) surfaces your own recent lines from local session logs. Reads no conversations by default; never opens a network connection.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -24,7 +24,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/wojiao42/dsh-memory-file.git"
+    "url": "git+https://github.com/wojiao42/dsh-long-term-memory.git"
   },
   "dsh": {
     "bundle": {

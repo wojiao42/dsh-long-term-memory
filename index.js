@@ -1,5 +1,5 @@
 /**
- * dsh-memory-file — 文件型长期记忆插件
+ * dsh-long-term-memory — 文件型长期记忆插件
  *
  * 设计约束（安全主张可被外部核实，请对照源码逐条检查）：
  *
@@ -43,7 +43,7 @@ import { zstdDecompressSync } from 'node:zlib';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
-export const name = 'memory-file';
+export const name = 'long-term-memory';
 
 /**
  * 声明对 tools 服务的依赖。
@@ -673,7 +673,7 @@ export function apply(ctx, config = {}) {
       // 校验失败（"message has invalid content"），整个会话被判定为损坏并隔离。
       message = createUserMessage({
         content: [{ type: 'text', text: content }],
-        source: { kind: 'memory-file', scope: 'injected' },
+        source: { kind: 'long-term-memory', scope: 'injected' },
       });
     } catch {
       // 构造失败就放弃注入，绝不影响正常对话。
@@ -1185,7 +1185,7 @@ export function apply(ctx, config = {}) {
   const toolset = [memoryAdd, memoryRecall, memoryList, memoryUndo, memoryPending, memoryScan, memoryStatus];
   if (!ctx.tools || typeof ctx.tools.register !== 'function') {
     throw new Error(
-      'memory-file: ctx.tools 不可用，工具未注册。请在插件里保持 `export const inject = [\'tools\']`。',
+      'long-term-memory: ctx.tools 不可用，工具未注册。请在插件里保持 `export const inject = [\'tools\']`。',
     );
   }
   for (const tool of toolset) ctx.tools.register(tool);
