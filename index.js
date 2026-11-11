@@ -143,6 +143,80 @@ function sidecarPaths(memoryFile) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// v2.1.0：消费外部导入插件产出的候选（memory_import_candidates）
+//   来自 dsh-chatgpt-to-memory 的 profile/inbox/candidates-*.json。
+//   分派规则：fact+high → MEMORY.md；fact+private → USER-PROFILE.md；
+//   interest/viewpoint → INTERESTS.md 对应分区；medium/low/restricted → 待审队列。
+// ─────────────────────────────────────────────────────────────
+
+const INTEREST_HEADINGS = [
+  [/影视|动漫|文化作品/, '## 影视 / 动漫'],
+  [/^游戏$|游戏/, '## 游戏'],
+  [/小说|读物|书/, '## 小说 / 读物'],
+  [/思想|观点|哲学|宗教/, '## 哲学 / 思想 / 宗教'],
+  [/历史|军事/, '## 历史 / 军事'],
+  [/网络文化|梗/, '## 网络文化 / 梗'],
+  [/考据|风格/, '## 考据与讨论风格'],
+];
+
+function interestHeading(category, type) {
+  if (type === 'viewpoint') return '## 考据与讨论风格';
+  const cat = String(category || '');
+  for (const [re, heading] of INTEREST_HEADINGS) if (re.test(cat)) return heading;
+  return '## 其他';
+}
+
+function normForDedupe(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '')
+    .trim();
+}
+
+/** 在 Markdown 的某个 `## 标题` 分区里追加条目；分区不存在就新建到文件末尾。 */
+function insertUnderHeading(text, heading, entryLines) {
+  const lines = text.split('\n');
+  const idx = lines.findIndex((l) => l.trim() === heading);
+  if (idx < 0) {
+    return `${text.replace(/\n*$/, '')}\n\n${heading}\n\n${entryLines.join('\n')}\n`;
+  }
+  let end = lines.length;
+  for (let i = idx + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  let insertAt = end;
+  while (insertAt > idx + 1 && lines[insertAt - 1].trim() === '') insertAt--;
+  lines.splice(insertAt, 0, ...entryLines);
+  return lines.join('\n');
+}
+
+/** USER-PROFILE.md 末尾追加"导入详情"分区（只建一次）。 */
+function appendProfileSection(text, date, entryLines) {
+  if (text.includes('## 14. 导入详情')) {
+    return insertUnderHeading(text, '## 14. 导入详情', entryLines);
+  }
+  return `${text.replace(/\n*$/, '')}\n\n## 14. 导入详情（${date}，由导入插件蒸馏，仅存本文件）\n\n${entryLines.join('\n')}\n`;
+}
+
+/** 读候选文件并做基本校验（只接受 profile/inbox/ 下的文件）。 */
+function readCandidates(file, profileDir, inboxDir) {
+  const abs = resolve(file);
+  const base = resolve(inboxDir);
+  const alt = resolve(profileDir);
+  if (!abs.startsWith(base) && !abs.startsWith(alt)) {
+    throw new Error(`候选文件必须在 ${base} 下，拒绝读取：${abs}`);
+  }
+  const parsed = JSON.parse(readFileSync(abs, 'utf8'));
+  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.items)) {
+    throw new Error('候选文件格式不对：需要 { version: 1, items: [...] }');
+  }
+  return { file: abs, data: parsed };
+}
+
 /** 记忆文件的 scope 标签，用于备份文件名。 */
 function scopeOf(file, paths) {
   return file === paths.global ? 'global' : 'workspace';
@@ -743,6 +817,202 @@ export function apply(ctx, config = {}) {
     presentCall: (args) => ({ card: 'generic', title: args.pending ? '写入待审' : '写入记忆', kind: 'write', rawInput: args.text }),
   });
 
+  const memoryImportCandidates = defineTool({
+    name: 'memory_import_candidates',
+    description:
+      '消费导入插件产出的候选（profile/inbox/candidates-*.json）：按类型与敏感度分派到 MEMORY.md / INTERESTS.md / USER-PROFILE.md 或待审队列；写前备份、去重、生成审计报告。不联网、不执行命令。',
+    parameters: {
+      file: { type: 'string', description: '候选文件路径（默认取 profile/inbox 下最新的 candidates-*.json）' },
+      dryRun: { type: 'boolean', description: '只算不写，默认 false' },
+      limit: { type: 'number', description: '最多写入条数（0 = 不限，默认 0）' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true, properties: {} },
+      render: (_a, v) => {
+        const head = v.dryRun ? 'dry-run（未写任何文件）' : '已写入';
+        const lines = [
+          `${head}：MEMORY.md +${v.written.memory} · INTERESTS.md +${v.written.interests} · USER-PROFILE.md +${v.written.profile}`,
+          `待审 ${v.pending} · 重复跳过 ${v.duplicates} · 忽略 ${v.skipped}（来源：${v.file}）`,
+        ];
+        if (v.backups.length) lines.push(`备份：${v.backups.join('；')}`);
+        if (v.report) lines.push(`报告：${v.report}`);
+        if (v.details.length) lines.push(`明细：\n${v.details.slice(0, 20).map((d) => `  · [${d.type}/${d.confidence}] ${d.text.slice(0, 60)} → ${d.target}`).join('\n')}`);
+        lines.push('提示：git 提交由 automation 负责（本插件不执行命令）。');
+        return [{ type: 'text', text: lines.join('\n') }];
+      },
+    },
+    async execute(args, exec) {
+      const paths = pathsFor(exec?.agent);
+      const cwd = exec?.agent?.session?.header?.cwd;
+      const profileDir = join(resolve(cwd), 'profile');
+      const inboxDir = join(profileDir, 'inbox');
+      const interestsFile = join(profileDir, 'INTERESTS.md');
+      const profileFile = join(profileDir, 'USER-PROFILE.md');
+      const dryRun = args.dryRun === true;
+
+      let file = args.file;
+      if (!file) {
+        let found = [];
+        if (existsSync(inboxDir)) {
+          // [audit:readdir] 列 inbox 目录，只接受 candidates-*.json 文件名
+          found = readdirSync(inboxDir).filter((f) => /^candidates-.*\.json$/.test(f)).sort();
+        }
+        if (!found.length) throw new Error(`没有候选文件：${inboxDir} 下没有 candidates-*.json`);
+        file = join(inboxDir, found[found.length - 1]);
+      }
+      const { file: abs, data } = readCandidates(file, profileDir, inboxDir);
+
+      // 读导入插件的取向配置（不存在就用默认）
+      let cfg = { writeMode: 'auto-high', sensitivity: { private: 'detailed-only', restricted: 'pending' } };
+      try {
+        const c = JSON.parse(readFileSync(join(profileDir, 'distill-config.json'), 'utf8'));
+        cfg = { ...cfg, ...c, sensitivity: { ...cfg.sensitivity, ...(c.sensitivity || {}) } };
+      } catch {
+        // 没有配置就用默认
+      }
+
+      const maxWrite = Number.isFinite(args.limit) && args.limit > 0 ? Math.floor(args.limit) : 0;
+      const existing = {
+        memory: readIfExists(paths.target) ?? '',
+        interests: readIfExists(interestsFile) ?? '',
+        profile: readIfExists(profileFile) ?? '',
+      };
+      const results = {
+        file: abs,
+        dryRun,
+        writeMode: cfg.writeMode,
+        written: { memory: 0, interests: 0, profile: 0 },
+        pending: 0,
+        duplicates: 0,
+        skipped: 0,
+        backups: [],
+        report: null,
+        details: [],
+      };
+      const memLines = [];
+      const interestEntries = new Map(); // heading -> lines
+      const profileLines = [];
+      const pendingLines = [];
+      const allExistingNorm = normForDedupe(`${existing.memory}\n${existing.interests}\n${existing.profile}`);
+      const seenNorm = new Set();
+      let written = 0;
+
+      for (const item of data.items) {
+        const text = String(item.text || '').trim();
+        if (!text) {
+          results.skipped++;
+          continue;
+        }
+        const conf = String(item.confidence || 'low');
+        const sens = String(item.sensitivity || 'normal');
+        const type = String(item.type || 'fact');
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(item.date || '')) ? String(item.date) : todayLocal();
+        const src = [item.title, item.date].filter(Boolean).join('，');
+        const line = `- [${date}] ${text}${src ? `（来源：${src}）` : ''}`;
+        const n = normForDedupe(text);
+        if (allExistingNorm.includes(n) || seenNorm.has(n)) {
+          results.duplicates++;
+          continue;
+        }
+        seenNorm.add(n);
+        let target = 'pending';
+        if (cfg.writeMode === 'report-only') target = 'report';
+        else if (cfg.writeMode === 'all-pending') target = 'pending';
+        else if (type === 'fact') {
+          if (sens === 'restricted') target = 'pending';
+          else if (sens === 'private') target = 'profile';
+          else if (conf === 'high') target = 'memory';
+        } else if (type === 'interest' || type === 'viewpoint') {
+          if (conf === 'high' || conf === 'medium') target = 'interests';
+        }
+        if (maxWrite > 0 && written >= maxWrite && (target === 'memory' || target === 'interests' || target === 'profile')) {
+          target = 'pending';
+        }
+        results.details.push({ type, confidence: conf, sensitivity: sens, text, target });
+        if (target === 'memory') {
+          memLines.push(line);
+          written++;
+        } else if (target === 'interests') {
+          const heading = interestHeading(item.category, type);
+          if (!interestEntries.has(heading)) interestEntries.set(heading, []);
+          interestEntries.get(heading).push(line);
+          written++;
+        } else if (target === 'profile') {
+          profileLines.push(line);
+          written++;
+        } else if (target === 'pending') {
+          pendingLines.push(`- [ ] ${line.slice(2)}`);
+        }
+      }
+      results.pending = pendingLines.length;
+
+      if (dryRun) {
+        results.written.memory = memLines.length;
+        results.written.interests = [...interestEntries.values()].reduce((a, v) => a + v.length, 0);
+        results.written.profile = profileLines.length;
+        return results;
+      }
+
+      const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      // 1) MEMORY.md（沿用写入前的整份备份 + 追加）
+      if (memLines.length) {
+        mkdirSync(dirname(paths.target), { recursive: true });
+        results.backups.push(backupBeforeWrite(paths.target, 'workspace'));
+        if (!existsSync(paths.target)) writeFileSync(paths.target, '# 记忆\n\n', 'utf8');
+        appendFileSync(paths.target, `${memLines.join('\n')}\n`, 'utf8');
+        results.written.memory = memLines.length;
+      }
+      // 2) INTERESTS.md（按分区插入）
+      if (interestEntries.size) {
+        mkdirSync(dirname(interestsFile), { recursive: true });
+        if (existsSync(interestsFile)) {
+          const bak = join(profileDir, 'backup', `INTERESTS-${stamp}.md`);
+          mkdirSync(dirname(bak), { recursive: true });
+          // [audit:copy] 写入前备份详细记忆文件（INTERESTS.md → profile/backup/）
+          copyFileSync(interestsFile, bak);
+          results.backups.push(bak);
+        }
+        let text = existsSync(interestsFile)
+          ? readFileSync(interestsFile, 'utf8')
+          : '# 文化与思想兴趣（详细版，不注入）\n';
+        for (const [heading, lines] of interestEntries) text = insertUnderHeading(text, heading, lines);
+        writeFileSync(interestsFile, text, 'utf8');
+        results.written.interests = [...interestEntries.values()].reduce((a, v) => a + v.length, 0);
+      }
+      // 3) USER-PROFILE.md（敏感/隐私事实，只存该文件）
+      if (profileLines.length) {
+        mkdirSync(dirname(profileFile), { recursive: true });
+        if (existsSync(profileFile)) {
+          const bak = join(profileDir, 'backup', `USER-PROFILE-${stamp}.md`);
+          mkdirSync(dirname(bak), { recursive: true });
+          // [audit:copy] 写入前备份详细画像（USER-PROFILE.md → profile/backup/）
+          copyFileSync(profileFile, bak);
+          results.backups.push(bak);
+        }
+        const text = existsSync(profileFile) ? readFileSync(profileFile, 'utf8') : '# 用户画像\n';
+        writeFileSync(profileFile, appendProfileSection(text, todayLocal(), profileLines), 'utf8');
+        results.written.profile = profileLines.length;
+      }
+      // 4) 待审队列（复用工作区记忆的 pending 文件）
+      if (pendingLines.length) {
+        const { pendingFile } = sidecarPaths(paths.target);
+        mkdirSync(dirname(pendingFile), { recursive: true });
+        appendFileSync(pendingFile, `${pendingLines.join('\n')}\n`, 'utf8');
+      }
+      // 5) 审计报告
+      const runDir = join(profileDir, 'import-runs', stamp);
+      mkdirSync(runDir, { recursive: true });
+      results.report = join(runDir, 'merge-report.json');
+      writeFileSync(
+        results.report,
+        `${JSON.stringify({ ...results, mergedAt: new Date().toISOString(), source: abs }, null, 2)}\n`,
+        'utf8',
+      );
+      return results;
+    },
+    presentCall: (args) => ({ card: 'generic', title: '导入记忆候选', kind: 'write', rawInput: args.file || '(最新候选)' }),
+  });
+
   const memoryRecall = defineTool({
     name: 'memory_recall',
     description:
@@ -1182,7 +1452,16 @@ export function apply(ctx, config = {}) {
   });
 
   // 注册工具。注册失败必须可见——静默吞掉会让「工具不工作」变成一个查不出的谜。
-  const toolset = [memoryAdd, memoryRecall, memoryList, memoryUndo, memoryPending, memoryScan, memoryStatus];
+  const toolset = [
+    memoryAdd,
+    memoryImportCandidates,
+    memoryRecall,
+    memoryList,
+    memoryUndo,
+    memoryPending,
+    memoryScan,
+    memoryStatus,
+  ];
   if (!ctx.tools || typeof ctx.tools.register !== 'function') {
     throw new Error(
       'long-term-memory: ctx.tools 不可用，工具未注册。请在插件里保持 `export const inject = [\'tools\']`。',

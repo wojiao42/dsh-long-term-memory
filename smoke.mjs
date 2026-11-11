@@ -168,7 +168,14 @@ await check('唯一的复制是「记忆文件 → 同目录 backup/」，源与
   assert.ok(/const dest = join\(backupDir,/.test(SRC), '备份目标不是从 backupDir 推导出来的');
   const copies = [...SRC.matchAll(/copyFileSync\(([^)]*)\)/g)].map((m) => m[1].trim());
   assert.ok(copies.length > 0, '没有登记任何复制操作');
-  for (const c of copies) assert.equal(c, 'file, dest', `复制源/目标超出预期: ${c}`);
+  // v2.1.0 起允许的复制只有三种，且目标都在 backup 目录：
+  //   1) 记忆文件 → sidecarPaths 推导的 backup/（backupBeforeWrite）
+  //   2) INTERESTS.md → profile/backup/INTERESTS-<stamp>.md
+  //   3) USER-PROFILE.md → profile/backup/USER-PROFILE-<stamp>.md
+  const allowed = new Set(['file, dest', 'interestsFile, bak', 'profileFile, bak']);
+  for (const c of copies) assert.ok(allowed.has(c), `复制源/目标超出预期: ${c}`);
+  assert.ok(/const bak = join\(profileDir, 'backup', `INTERESTS-/.test(SRC), 'INTERESTS 备份目标不应越出 profile/backup');
+  assert.ok(/const bak = join\(profileDir, 'backup', `USER-PROFILE-/.test(SRC), 'USER-PROFILE 备份目标不应越出 profile/backup');
 });
 
 // ───────────────────────── B) 行为测试 ─────────────────────────
@@ -194,11 +201,12 @@ const fakeCtx = {
 const fakeAgent = { session: { header: { cwd } } };
 const okDecision = { kind: 'ok', messages: [] };
 
-await check('apply() 能正常挂载，订阅 pre-step，注册 7 个工具', () => {
+await check('apply() 能正常挂载，订阅 pre-step，注册 8 个工具', () => {
   mod.apply(fakeCtx, { dshHome: home });
   assert.ok(typeof handlers['agent/pre-step'] === 'function', '未订阅 agent/pre-step');
   assert.deepEqual(registered.map((t) => t.name), [
     'memory_add',
+    'memory_import_candidates',
     'memory_recall',
     'memory_list',
     'memory_undo',
@@ -609,6 +617,76 @@ await check('注入内容里的 </system-reminder> 被转义（防框架闭合�
 //     userRender is not a function
 // 表现为 memory_add / memory_list 直接报错。类型定义里 render 没有 `?`，
 // 属于必填 —— 所以这是插件的错，不是宿主的错。
+// ── v2.1.0：memory_import_candidates —— 消费外部导入插件产出的候选 ──
+const importTool = registered.find((t) => t.name === 'memory_import_candidates');
+const importProfileDir = join(cwd, 'profile');
+const importInbox = join(importProfileDir, 'inbox');
+mkdirSync(importInbox, { recursive: true });
+const interestsFileX = join(importProfileDir, 'INTERESTS.md');
+const userProfileFileX = join(importProfileDir, 'USER-PROFILE.md');
+writeFileSync(interestsFileX, '# 文化与思想兴趣\n\n## 影视 / 动漫\n\n## 游戏\n', 'utf8');
+writeFileSync(userProfileFileX, '# 用户画像\n', 'utf8');
+const candFile = join(importInbox, 'candidates-2026-11-11.json');
+const candItem = (over) => ({ type: 'fact', category: '硬件', confidence: 'high', sensitivity: 'normal', date: '2026-11-11', title: '导入测试', ...over });
+writeFileSync(
+  candFile,
+  JSON.stringify({
+    version: 1,
+    items: [
+      candItem({ text: '测试导入的持久事实A' }),
+      candItem({ text: '测试导入的持久事实A' }), // 批内重复，应被跳过
+      candItem({ text: '测试导入的敏感事实B', category: '家庭', sensitivity: 'private' }),
+      candItem({ text: '测试导入的受限事实C', sensitivity: 'restricted' }),
+      candItem({ type: 'interest', category: '影视动漫', text: '测试导入的影视兴趣D' }),
+      candItem({ type: 'viewpoint', category: '观点', confidence: 'medium', text: '测试导入的观点E' }),
+    ],
+  }),
+  'utf8',
+);
+
+await check('memory_import_candidates 按类型/敏感度分派并记账', async () => {
+  const r = await importTool.execute({ file: candFile }, { agent: fakeAgent });
+  assert.equal(r.written.memory, 1, `MEMORY 写入数不对：${r.written.memory}`);
+  assert.equal(r.written.interests, 2, `INTERESTS 写入数不对：${r.written.interests}`);
+  assert.equal(r.written.profile, 1, `USER-PROFILE 写入数不对：${r.written.profile}`);
+  assert.equal(r.pending, 1, `待审数不对：${r.pending}`);
+  assert.equal(r.duplicates, 1, `重复数不对：${r.duplicates}`);
+
+  const mem = readFileSync(memoryFile, 'utf8');
+  assert.ok(mem.includes('测试导入的持久事实A'), '高置信 fact 没进注入文件');
+  assert.ok(!mem.includes('测试导入的敏感事实B'), 'private 事实不应进注入文件');
+
+  const up = readFileSync(userProfileFileX, 'utf8');
+  assert.ok(up.includes('测试导入的敏感事实B'), 'private 事实没进 USER-PROFILE');
+  assert.ok(up.includes('## 14. 导入详情'), 'USER-PROFILE 缺导入详情分区');
+
+  const it = readFileSync(interestsFileX, 'utf8');
+  assert.ok(it.includes('测试导入的影视兴趣D'), '兴趣没进 INTERESTS');
+  assert.ok(it.includes('测试导入的观点E'), '观点没进 INTERESTS');
+  const videoIdx = it.indexOf('## 影视 / 动漫');
+  const interestIdx = it.indexOf('测试导入的影视兴趣D');
+  const gameIdx = it.indexOf('## 游戏');
+  assert.ok(interestIdx > videoIdx && interestIdx < gameIdx, '兴趣没放进「影视 / 动漫」分区');
+
+  assert.ok(readFileSync(pendingFile, 'utf8').includes('测试导入的受限事实C'), 'restricted 事实没进待审');
+  assert.ok(r.backups.length > 0, '写前没有备份');
+  assert.ok(r.report && existsSync(r.report), '没有审计报告');
+});
+
+await check('memory_import_candidates dryRun 只算不写', async () => {
+  const before = readFileSync(memoryFile, 'utf8');
+  const r = await importTool.execute({ file: candFile, dryRun: true }, { agent: fakeAgent });
+  assert.equal(r.dryRun, true);
+  assert.equal(readFileSync(memoryFile, 'utf8'), before, 'dryRun 写了 MEMORY.md');
+});
+
+await check('memory_import_candidates 拒绝 inbox 之外的文件', async () => {
+  await assert.rejects(
+    () => importTool.execute({ file: join(cwd, 'AGENTS.md') }, { agent: fakeAgent }),
+    /候选文件必须在/,
+  );
+});
+
 await check('每个工具都实现了 output.render（漏掉则结果无法渲染）', () => {
   for (const t of registered) {
     assert.equal(typeof t.output?.render, 'function', `${t.name} 缺少 output.render`);
