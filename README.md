@@ -308,6 +308,8 @@ node tools/publish-test.mjs    # 25 项断言：发布脚本与隐私扫描的�
 
 ## 收录状态
 
+- 更名条目 PR：[awesome-dsh-plugin #15929](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/15929)（**已合并**）
+
 - 仓库：<https://github.com/wojiao42/dsh-long-term-memory>（已带 `dsh-plugin` topic）
 - 目标目录：社区精选 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)，
   `dsh-plugin.org` 上的条目从它同步 —— **进了这个目录就等于进了插件市场**
